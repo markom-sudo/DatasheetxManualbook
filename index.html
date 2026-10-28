@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b6bcb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/Icon192.svg">
+<link rel="apple-touch-icon" href="assets/Icon192.svg">
 <title>Tender Helper</title>
 <style>
 :root{--bg:#fff;--fg:#1b1f24;--mu:#667;--bd:#d6dae0;--ac:#0b6bcb;--card:#f6f8fa;--ok:#d9f2df;--wa:#fff1c2;--er:#fbd9d9}
@@ -19,7 +23,7 @@ textarea{width:100%;resize:vertical}input[type=text]{width:100%}button{cursor:po
 </head>
 <body>
 <h1>Tender Helper</h1>
-<div class="row"><select id="prod" style="flex:1;min-width:220px"></select><span id="info" class="mu"></span><button id="cfg">Pengaturan</button></div>
+<div class="row"><select id="prod" style="flex:1;min-width:220px"></select><span id="info" class="mu"></span><button id="inst" hidden>Pasang aplikasi</button><button id="cfg">Pengaturan</button></div>
 <div class="card">
   <div class="row"><b>Tambah satu persyaratan</b></div>
   <input type="text" id="p1" placeholder="Parameter, mis. Paper Speed">
@@ -63,6 +67,14 @@ function snippet(text, q){
   for(const w of qt){ pos = low.indexOf(w); if(pos >= 0) break; }
   const a = Math.max(0, pos < 0 ? 0 : pos - 70);
   return text.slice(a, a + 200).replace(/\n/g,' ');
+}
+function bestSentence(text, q){     // kalimat di halaman yang paling banyak memuat kata kunci persyaratan
+  const qt = new Set(tok(q)); let best = '', bs = 0;
+  (text.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]?/g) || []).forEach(x => {
+    const t = x.trim(); if(t.length < 25) return; let sc = 0;
+    new Set(tok(t)).forEach(w => { if(qt.has(w)) sc += S.idf[w] || 0; });
+    if(sc > bs){ bs = sc; best = t; } });
+  return best.slice(0, 300);
 }
 const jacc = (a,b) => { const A = new Set(tok(a)), B = new Set(tok(b)); let i = 0; A.forEach(w => B.has(w) && i++); return i/Math.max(1, A.size + B.size - i); };
 function bankMatch(par, req){
@@ -133,7 +145,7 @@ function render(){
     <span>URL</span><input type="text" data-f="url" data-i="${i}" value="${esc(it.url)}"></div>
     <div class="row"><button data-a="ask" data-i="${i}">Tanya Gemini</button><button class="p" data-a="save" data-i="${i}">Simpan ke Bank</button><span class="mu">${esc(it.msg)}</span></div>
     ${it.dsc.map((l,k) => `<div class="cand"><div><span class="mu">Datasheet · ${esc(l.section)}</span><br>${esc(l.text)}</div><button data-a="useds" data-i="${i}" data-k="${k}">Pakai</button></div>`).join('')}
-    ${it.cand.map(pi => { const p = S.manual.pages[pi]; return `<div class="cand"><div><span class="mu">Manual hal. ${esc(label(p))}</span><br>${esc(snippet(p.text, it.par+' '+it.req))}</div><button data-a="usepg" data-i="${i}" data-k="${pi}">Pakai</button></div>`; }).join('')}
+    ${it.cand.map(pi => { const p = S.manual.pages[pi]; return `<div class="cand"><div><span class="mu">Manual hal. ${esc(label(p))}</span><br>${esc(bestSentence(p.text, it.par+' '+it.req) || snippet(p.text, it.par+' '+it.req))}</div><button data-a="usepg" data-i="${i}" data-k="${pi}">Pakai</button></div>`; }).join('')}
   </div>`).join('');
 }
 $('items').addEventListener('input', e => { const f = e.target.dataset.f; if(f) S.items[e.target.dataset.i][f === 'yn' ? 'yn' : f] = e.target.value; });
@@ -141,7 +153,7 @@ $('items').addEventListener('click', async e => {
   const a = e.target.dataset.a; if(!a) return; const i = +e.target.dataset.i, it = S.items[i];
   if(a === 'del'){ S.items.splice(i,1); return render(); }
   if(a === 'usepg'){ const p = S.manual.pages[+e.target.dataset.k], n = label(p);
-    it.src = /^Manual Book Page/.test(it.src) ? it.src + ', ' + n : 'Manual Book Page ' + n; it.url = S.manual.url; if(!it.yn) it.yn = 'Yes'; if(!it.det) it.det = 'Yes, '; it.st = it.st === 'bank' ? 'sim' : it.st; return render(); }
+    it.src = /^Manual Book Page/.test(it.src) ? it.src + ', ' + n : 'Manual Book Page ' + n; it.url = S.manual.url; if(!it.yn) it.yn = 'Yes'; if(!it.det || it.det === 'Yes, ') it.det = 'Yes, ' + (bestSentence(p.text, it.par + ' ' + it.req) || ''); it.st = it.st === 'bank' ? 'sim' : it.st; return render(); }
   if(a === 'useds'){ const l = it.dsc[+e.target.dataset.k]; it.yn = 'Yes'; it.det = 'Yes, ' + l.text.replace(' | ', ': ').replace(/ \| /g, ', '); it.src = 'Datasheet'; it.url = S.ds.url; return render(); }
   if(a === 'save'){ try{ await api('saveBank', {model:S.prod, parameter:it.par, requirement:it.req, yesno:it.yn, details:it.det, source:it.src, url:it.url}, true);
       S.bank = (await api('bank')).rows; it.msg = 'Tersimpan ke Bank'; }catch(err){ it.msg = err.message; } return render(); }
@@ -168,6 +180,10 @@ $('copy').onclick = async () => { await navigator.clipboard.writeText(rowsTSV())
 $('csv').onclick = () => { const q = s => '"' + String(s ?? '').replace(/"/g,'""') + '"';
   const t = ['Parameter,Requirement,Ya/Tidak,Details,Sumber,URL'].concat(S.items.map(it => [it.par,it.req,it.yn,it.det,it.src,it.url].map(q).join(','))).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + t], {type:'text/csv'})); a.download = 'tender-' + (S.prod||'jawaban') + '.csv'; a.click(); };
+let dp = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); dp = e; $('inst').hidden = false; });
+$('inst').onclick = async () => { if(!dp) return; dp.prompt(); await dp.userChoice; dp = null; $('inst').hidden = true; };
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 init();
 </script>
 </body>
