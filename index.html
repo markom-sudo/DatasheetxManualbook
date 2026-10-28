@@ -25,10 +25,11 @@ textarea{width:100%;resize:vertical}input[type=text]{width:100%}button{cursor:po
   <input type="text" id="p1" placeholder="Parameter, mis. Paper Speed">
   <textarea id="r1" rows="2" placeholder="Requirement, mis. Required; User-selectable paper speeds of 1, 2, and 3 cm/min."></textarea>
   <div class="row" style="margin-top:6px"><button class="p" id="add1">Tambah &amp; cari</button></div>
-  <details><summary class="mu">Tempel banyak sekaligus (dua kolom dari Excel: Parameter ⇥ Requirement)</summary>
+  <details><summary class="mu">Tempel banyak sekaligus: salin kolom B:C dari form, mulai dari baris yang sama dengan "Baris awal" di bawah (baris judul ikut disalin)</summary>
     <textarea id="bulk" rows="4"></textarea><button id="addN" style="margin-top:6px">Proses semua</button></details>
 </div>
-<div class="row"><button id="copy" class="p">Salin ke Excel (kolom D–H)</button><button id="csv">Unduh CSV</button><label class="mu">Bahasa jawaban Gemini <select id="lang"><option value="en">English</option><option value="id">Indonesia</option></select></label></div>
+<div class="row"><button id="copy" class="p">Salin ke Excel (kolom D–H)</button><button id="csv">Unduh CSV</button><label class="mu">Baris awal di form <input type="number" id="start" value="6" style="width:64px"></label><label class="mu">Bahasa jawaban Gemini <select id="lang"><option value="en">English</option><option value="id">Indonesia</option></select></label></div>
+<div class="row"><button id="fill" class="p">Isi ke Google Sheet form</button><button id="saveAll">Simpan semua ke Bank</button><button id="askAll">Gemini untuk semua yang kosong</button></div>
 <div id="items"></div>
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbycL1BYgqGBSh-ZKq8knevCjOaj-sKtoCgbzu-D2rguu6k61SdcxUtMbNZP0PBwbyBRRA/exec'; // URL deployment Web app (berakhiran /exec)
@@ -97,23 +98,33 @@ $('prod').onchange = async () => {
   $('info').textContent = (m.pages ? m.pages.length + ' hal. manual' : 'tanpa manual') + ' · ' + (d.lines ? d.lines.length + ' baris datasheet' : 'tanpa datasheet');
 };
 
-function addItem(par, req){
+function parseTSV(t){ const rows = []; let row = [], cur = '', q = false;
+  for(let i = 0; i < t.length; i++){ const c = t[i];
+    if(q){ if(c === '"'){ if(t[i+1] === '"'){ cur += '"'; i++; } else q = false; } else cur += c; }
+    else if(c === '"' && cur === '') q = true;
+    else if(c === '\t'){ row.push(cur); cur = ''; }
+    else if(c === '\n' || c === '\r'){ if(c === '\r' && t[i+1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += c; }
+  if(cur !== '' || row.length){ row.push(cur); rows.push(row); } return rows; }
+function addItem(par, req, row, quiet){
   if(!S.prod){ alert('Pilih produk dulu'); return; }
-  const it = {par, req, yn:'', det:'', src:'', url:'', st:'none', cand:[], dsc:[], ref:null, msg:''};
+  if(!req){ S.items.push({skip:true, par, row}); if(!quiet) render(); return; }   // baris judul: dilewati tapi tetap menjaga urutan
+  const it = {par, req, row, yn:'', det:'', src:'', url:'', st:'none', cand:[], dsc:[], ref:null, msg:''};
   const q = par + ' ' + req, m = bankMatch(par, req);
   if(m && m.r.model === S.prod && m.s >= .35){ Object.assign(it, {yn:m.r.yesno, det:m.r.details, src:m.r.source, url:m.r.url, st: m.s >= .6 ? 'bank' : 'sim'}); }
   else if(m && m.s >= .5) it.ref = m.r;
   if(S.manual) it.cand = candidates(q);
   if(S.ds){ const qt = new Set(tok(q)); it.dsc = S.ds.lines.map(l => [tok(l.section+' '+l.text).filter(w => qt.has(w)).length, l]).filter(x => x[0] > 0).sort((a,b) => b[0]-a[0]).slice(0,3).map(x => x[1]); }
-  S.items.push(it); render();
+  S.items.push(it); if(!quiet) render();
 }
 $('add1').onclick = () => { if(!$('p1').value.trim() && !$('r1').value.trim()) return; addItem($('p1').value.trim(), $('r1').value.trim()); $('p1').value = $('r1').value = ''; };
-$('addN').onclick = () => { $('bulk').value.split('\n').filter(l => l.trim()).forEach(l => { const [a, ...b] = l.split('\t'); addItem((a||'').trim(), b.join(' ').trim()); }); $('bulk').value = ''; };
+$('addN').onclick = () => { if(!S.prod){ alert('Pilih produk dulu'); return; } const st = +$('start').value || 6;
+  parseTSV($('bulk').value).forEach((c, i) => addItem((c[0]||'').trim(), (c[1]||'').trim(), st + i, true)); $('bulk').value = ''; render(); };
 
 function render(){
   const chip = {bank:['ok','Dari Bank'], sim:['wa','Mirip Bank - periksa'], none:['er','Baru']};
-  $('items').innerHTML = S.items.map((it,i) => `<div class="card">
-    <div class="row"><b>${esc(it.par)}</b><span class="chip ${chip[it.st][0]}">${chip[it.st][1]}</span><button data-a="del" data-i="${i}" style="margin-left:auto">Hapus</button></div>
+  $('items').innerHTML = S.items.map((it,i) => it.skip ? `<div class="mu" style="margin:8px 0">▸ ${esc(it.par)} <i>(baris ${it.row}, judul - dilewati)</i></div>` : `<div class="card">
+    <div class="row"><b>${esc(it.par)}</b>${it.row ? `<span class="mu">baris ${it.row}</span>` : ''}<span class="chip ${chip[it.st][0]}">${chip[it.st][1]}</span><button data-a="del" data-i="${i}" style="margin-left:auto">Hapus</button></div>
     <div class="mu" style="margin-bottom:6px">${esc(it.req)}</div>
     ${it.ref ? `<div class="mu">Contoh dari ${esc(it.ref.model)}: ${esc(it.ref.details)} <i>(nilai &amp; halaman khusus model itu)</i></div>` : ''}
     <div class="grid"><span>Ya/Tidak</span><select data-f="yn" data-i="${i}"><option value=""></option><option ${it.yn==='Yes'?'selected':''}>Yes</option><option ${it.yn==='No'?'selected':''}>No</option></select>
@@ -130,17 +141,29 @@ $('items').addEventListener('click', async e => {
   const a = e.target.dataset.a; if(!a) return; const i = +e.target.dataset.i, it = S.items[i];
   if(a === 'del'){ S.items.splice(i,1); return render(); }
   if(a === 'usepg'){ const p = S.manual.pages[+e.target.dataset.k], n = label(p);
-    it.src = /^Manual Book Page/.test(it.src) ? it.src + ', ' + n : 'Manual Book Page ' + n; it.url = S.manual.url; if(!it.det) it.det = 'Yes, '; it.st = it.st === 'bank' ? 'sim' : it.st; return render(); }
-  if(a === 'useds'){ const l = it.dsc[+e.target.dataset.k]; it.det = 'Yes, ' + l.text; it.src = 'Datasheet'; it.url = S.ds.url; return render(); }
+    it.src = /^Manual Book Page/.test(it.src) ? it.src + ', ' + n : 'Manual Book Page ' + n; it.url = S.manual.url; if(!it.yn) it.yn = 'Yes'; if(!it.det) it.det = 'Yes, '; it.st = it.st === 'bank' ? 'sim' : it.st; return render(); }
+  if(a === 'useds'){ const l = it.dsc[+e.target.dataset.k]; it.yn = 'Yes'; it.det = 'Yes, ' + l.text.replace(' | ', ': ').replace(/ \| /g, ', '); it.src = 'Datasheet'; it.url = S.ds.url; return render(); }
   if(a === 'save'){ try{ await api('saveBank', {model:S.prod, parameter:it.par, requirement:it.req, yesno:it.yn, details:it.det, source:it.src, url:it.url}, true);
       S.bank = (await api('bank')).rows; it.msg = 'Tersimpan ke Bank'; }catch(err){ it.msg = err.message; } return render(); }
-  if(a === 'ask'){ if(!it.cand.length){ it.msg = 'Tidak ada halaman kandidat'; return render(); } it.msg = 'Menunggu Gemini...'; render();
-    try{ const r = await api('ask', {product:S.prod, parameter:it.par, requirement:it.req, pages: it.cand.slice(0,8).map(pi => S.manual.pages[pi].pdf), lang:$('lang').value}, true);
-      if(r.status === 'Not found') it.msg = 'Gemini: tidak ditemukan bukti di halaman kandidat';
-      else { it.yn = r.status; it.det = r.details; it.src = 'Manual Book Page ' + r.pages.join(', '); it.url = S.manual.url; it.msg = 'Usulan Gemini - periksa sebelum dipakai'; it.st = 'sim'; }
-    }catch(err){ it.msg = err.message; } render(); }
+  if(a === 'ask'){ await askOne(it); render(); }
 });
-const rowsTSV = () => S.items.map(it => [it.yn==='Yes'?'√':'', it.yn==='No'?'x':'', it.det, it.src, it.url].map(c => String(c).replace(/[\t\n\r]+/g,' ')).join('\t')).join('\n');
+async function askOne(it){
+  if(!it.cand.length){ it.msg = 'Tidak ada halaman kandidat'; return; } it.msg = 'Menunggu Gemini...'; render();
+  try{ const r = await api('ask', {product:S.prod, parameter:it.par, requirement:it.req, pages: it.cand.slice(0,8).map(pi => S.manual.pages[pi].pdf), lang:$('lang').value}, true);
+    if(r.status === 'Not found') it.msg = 'Gemini: tidak ditemukan bukti di halaman kandidat';
+    else { it.yn = r.status; it.det = r.details; it.src = 'Manual Book Page ' + r.pages.join(', '); it.url = S.manual.url; it.msg = 'Usulan Gemini - periksa sebelum dipakai'; it.st = 'sim'; }
+  }catch(err){ it.msg = err.message; } }
+$('askAll').onclick = async () => { const L = S.items.filter(it => !it.skip && !it.det && it.cand.length);
+  if(!L.length){ alert('Tidak ada persyaratan yang perlu ditanyakan'); return; } if(!confirm('Tanya Gemini untuk ' + L.length + ' persyaratan satu per satu? Bisa beberapa menit.')) return;
+  for(const it of L) await askOne(it); render(); };
+$('saveAll').onclick = async () => { const L = S.items.filter(it => !it.skip && (it.det || it.src)); let n = 0;
+  for(const it of L){ try{ await api('saveBank', {model:S.prod, parameter:it.par, requirement:it.req, yesno:it.yn, details:it.det, source:it.src, url:it.url}, true); n++; it.msg = 'Tersimpan ke Bank'; }catch(e){ it.msg = e.message; } }
+  S.bank = (await api('bank')).rows; render(); alert(n + ' jawaban tersimpan ke Bank'); };
+$('fill').onclick = async () => { const rows = S.items.filter(it => !it.skip && it.row).map(it => ({row:it.row, yn:it.yn, details:it.det, source:it.src, url:it.url}));
+  if(!rows.length){ alert('Belum ada baris bernomor. Gunakan "Tempel banyak sekaligus" dari form.'); return; }
+  let u = prompt('Link Google Sheet form tender (hasil File > Save as Google Sheets):', localStorage.getItem('th_form') || ''); if(!u) return; localStorage.setItem('th_form', u);
+  try{ const r = await api('fill', {url:u, rows}, true); alert('Terisi ' + r.written + ' baris' + (r.skipped.length ? '. Dilewati (baris judul gabungan): ' + r.skipped.join(', ') : '')); }catch(e){ alert(e.message); } };
+const rowsTSV = () => S.items.map(it => it.skip ? ['','','','',''] : [it.yn==='No'?'':'√', it.yn==='No'?'x':'', it.det, it.src, it.url].map(c => String(c).replace(/[\t\n\r]+/g,' ')).join('\t')).join('\n');
 $('copy').onclick = async () => { await navigator.clipboard.writeText(rowsTSV()); alert('Disalin. Tempel di sel D pada baris pertama form tender (urutan sama dengan daftar ini).'); };
 $('csv').onclick = () => { const q = s => '"' + String(s ?? '').replace(/"/g,'""') + '"';
   const t = ['Parameter,Requirement,Ya/Tidak,Details,Sumber,URL'].concat(S.items.map(it => [it.par,it.req,it.yn,it.det,it.src,it.url].map(q).join(','))).join('\n');
