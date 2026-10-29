@@ -123,7 +123,7 @@ function addItem(par, req, row, quiet){
   if(!req){ S.items.push({skip:true, par, row}); if(!quiet) render(); return; }   // baris judul: dilewati tapi tetap menjaga urutan
   const it = {par, req, row, yn:'', det:'', src:'', url:'', st:'none', cand:[], dsc:[], ref:null, msg:''};
   const q = par + ' ' + req, m = bankMatch(par, req);
-  if(m && m.r.model === S.prod && m.s >= .35){ Object.assign(it, {yn:m.r.yesno, det:m.r.details, src:m.r.source, url:m.r.url, st: m.s >= .6 ? 'bank' : 'sim'}); }
+  if(m && m.r.model === S.prod && m.s >= .35){ Object.assign(it, {yn:m.r.yesno, det:m.r.details, src:m.r.source, url:m.r.url || (S.manual && /^manual book/i.test(m.r.source) ? S.manual.url : ''), st: m.s >= .6 ? 'bank' : 'sim'}); }
   else if(m && m.s >= .5) it.ref = m.r;
   if(S.manual) it.cand = candidates(q);
   if(S.ds){ const qt = new Set(tok(q)); it.dsc = S.ds.lines.map(l => [tok(l.section+' '+l.text).filter(w => qt.has(w)).length, l]).filter(x => x[0] > 0).sort((a,b) => b[0]-a[0]).slice(0,3).map(x => x[1]); }
