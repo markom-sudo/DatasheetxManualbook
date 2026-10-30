@@ -7,7 +7,8 @@
 <meta name="theme-color" content="#0b6bcb">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="assets/Icon192.svg">
-<link rel="apple-touch-icon" href="assets/Icon192.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <title>Tender Helper</title>
 <style>
 :root{--bg:#fff;--fg:#1b1f24;--mu:#667;--bd:#d6dae0;--ac:#0b6bcb;--card:#f6f8fa;--ok:#d9f2df;--wa:#fff1c2;--er:#fbd9d9}
@@ -23,7 +24,7 @@ textarea{width:100%;resize:vertical}input[type=text]{width:100%}button{cursor:po
 </head>
 <body>
 <h1>Tender Helper</h1>
-<div class="row"><select id="prod" style="flex:1;min-width:220px"></select><span id="info" class="mu"></span><button id="inst" hidden>Pasang aplikasi</button><button id="cfg">Pengaturan</button></div>
+<div class="row"><select id="prod" style="flex:1;min-width:220px"></select><span id="info" class="mu"></span><span id="hint" class="mu" hidden></span><button id="inst" hidden>Pasang aplikasi</button><button id="cfg">Pengaturan</button></div>
 <div class="card">
   <div class="row"><b>Tambah satu persyaratan</b></div>
   <input type="text" id="p1" placeholder="Parameter, mis. Paper Speed">
@@ -76,38 +77,47 @@ function bestSentence(text, q){     // kalimat di halaman yang paling banyak mem
     if(sc > bs){ bs = sc; best = t; } });
   return best.slice(0, 300);
 }
-const jacc = (a,b) => { const A = new Set(tok(a)), B = new Set(tok(b)); let i = 0; A.forEach(w => B.has(w) && i++); return i/Math.max(1, A.size + B.size - i); };
-function bankMatch(par, req){
-  let best = null;
-  S.bank.forEach(r => { const s = jacc(par+' '+req, r.parameter+' '+r.requirement); if(!best || s > best.s) best = {s, r}; });
-  return best;
+const cmp = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');     // "PM PRO-4" = "pm pro4"
+const jset = (A, B) => { let i = 0; A.forEach(w => B.has(w) && i++); return i/Math.max(1, A.size + B.size - i); };
+function bankMatch(par, req){      // terbaik di model yang sama; terbaik di model lain hanya untuk contoh
+  const q = new Set(tok(par + ' ' + req)), mk = cmp(S.prod); let same = null, other = null;
+  S.bank.forEach(r => { const s = jset(q, r.t);
+    if(r.k === mk){ if(!same || s > same.s) same = {s, r}; } else if(!other || s > other.s) other = {s, r}; });
+  return {same, other};
 }
 //#core-end
 
 async function api(action, params={}, post=false){
   const body = Object.assign({action, token: TOKEN}, params);
   const r = post ? await fetch(GAS_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(body)})
-                 : await fetch(GAS_URL + '?' + new URLSearchParams(body));
+                 : await fetch(GAS_URL + '?' + new URLSearchParams(Object.assign({_: Date.now()}, body)));
   const j = await r.json(); if(!j.ok) throw new Error(j.error); return j;
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const label = p => p.cetak === '' ? 'PDF ' + p.pdf : String(p.cetak);
 
+async function loadBank(){
+  const bk = await api('bank');
+  S.bank = bk.rows.map(r => Object.assign(r, {k: cmp(r.model), t: new Set(tok(r.parameter + ' ' + r.requirement))}));
+}
+const bankCount = () => S.bank.filter(r => r.k === cmp(S.prod)).length;
 async function init(){
   if(!TOKEN){ TOKEN = prompt('Token (dari Execution log setupToken):') || ''; localStorage.setItem('th_token', TOKEN); }
   try{
-    const [pr, bk] = await Promise.all([api('products'), api('bank')]);
-    S.bank = bk.rows;
+    const pr = await api('products');
     $('prod').innerHTML = '<option value="">- pilih produk -</option>' + pr.products.map(p => `<option value="${esc(p.name)}">${esc(p.name)} ${p.datasheet?'[DS]':''}${p.manual?'[MB]':''}</option>`).join('');
-  }catch(e){ $('info').textContent = 'Gagal memuat: ' + e.message; }
+  }catch(e){ $('info').textContent = 'Gagal memuat: ' + e.message; return; }
+  loadBank().catch(e => { $('info').textContent = 'Bank gagal dimuat: ' + e.message; });
 }
 $('cfg').onclick = () => { const t = prompt('Token baru:', TOKEN); if(t !== null){ TOKEN = t; localStorage.setItem('th_token', t); location.reload(); } };
 $('prod').onchange = async () => {
   S.prod = $('prod').value; S.manual = S.ds = null; S.items = []; render(); if(!S.prod) return;
   $('info').textContent = 'Memuat...';
-  const [m, d] = await Promise.all([api('manual', {product:S.prod}).catch(e => ({err:e.message})), api('datasheet', {product:S.prod}).catch(e => ({err:e.message}))]);
+  const [m, d, be] = await Promise.all([api('manual', {product:S.prod}).catch(e => ({err:e.message})), api('datasheet', {product:S.prod}).catch(e => ({err:e.message})), loadBank().then(() => '').catch(e => e.message)]);
   if(m.pages){ S.manual = m; buildIndex(m.pages); } if(d.lines) S.ds = d;
-  $('info').textContent = (m.pages ? m.pages.length + ' hal. manual' : 'tanpa manual') + ' · ' + (d.lines ? d.lines.length + ' baris datasheet' : 'tanpa datasheet');
+  const n = be ? 0 : bankCount();
+  $('info').textContent = (m.pages ? m.pages.length + ' hal. manual' : 'tanpa manual') + ' · ' + (d.lines ? d.lines.length + ' baris datasheet' : 'tanpa datasheet') + ' · ' +
+    (be ? 'Bank gagal dimuat: ' + be : 'Bank: ' + n + ' jawaban untuk produk ini (' + S.bank.length + ' total)' + (n ? '' : ' - cek nama model di sheet BANK'));
 };
 
 function parseTSV(t){ const rows = []; let row = [], cur = '', q = false;
@@ -122,9 +132,9 @@ function addItem(par, req, row, quiet){
   if(!S.prod){ alert('Pilih produk dulu'); return; }
   if(!req){ S.items.push({skip:true, par, row}); if(!quiet) render(); return; }   // baris judul: dilewati tapi tetap menjaga urutan
   const it = {par, req, row, yn:'', det:'', src:'', url:'', st:'none', cand:[], dsc:[], ref:null, msg:''};
-  const q = par + ' ' + req, m = bankMatch(par, req);
-  if(m && m.r.model === S.prod && m.s >= .35){ Object.assign(it, {yn:m.r.yesno, det:m.r.details, src:m.r.source, url:m.r.url || (S.manual && /^manual book/i.test(m.r.source) ? S.manual.url : ''), st: m.s >= .6 ? 'bank' : 'sim'}); }
-  else if(m && m.s >= .5) it.ref = m.r;
+  const q = par + ' ' + req, {same, other} = bankMatch(par, req);
+  if(same && same.s >= .35){ const r = same.r; Object.assign(it, {yn:r.yesno, det:r.details, src:r.source, url:r.url || (S.manual && /^manual book/i.test(r.source) ? S.manual.url : ''), st: same.s >= .6 ? 'bank' : 'sim'}); }
+  else if(other && other.s >= .5) it.ref = other.r;
   if(S.manual) it.cand = candidates(q);
   if(S.ds){ const qt = new Set(tok(q)); it.dsc = S.ds.lines.map(l => [tok(l.section+' '+l.text).filter(w => qt.has(w)).length, l]).filter(x => x[0] > 0).sort((a,b) => b[0]-a[0]).slice(0,3).map(x => x[1]); }
   S.items.push(it); if(!quiet) render();
@@ -156,7 +166,7 @@ $('items').addEventListener('click', async e => {
     it.src = /^Manual Book Page/.test(it.src) ? it.src + ', ' + n : 'Manual Book Page ' + n; it.url = S.manual.url; if(!it.yn) it.yn = 'Yes'; if(!it.det || it.det === 'Yes, ') it.det = 'Yes, ' + (bestSentence(p.text, it.par + ' ' + it.req) || ''); it.st = it.st === 'bank' ? 'sim' : it.st; return render(); }
   if(a === 'useds'){ const l = it.dsc[+e.target.dataset.k]; it.yn = 'Yes'; it.det = 'Yes, ' + l.text.replace(' | ', ': ').replace(/ \| /g, ', '); it.src = 'Datasheet'; it.url = S.ds.url; return render(); }
   if(a === 'save'){ try{ await api('saveBank', {model:S.prod, parameter:it.par, requirement:it.req, yesno:it.yn, details:it.det, source:it.src, url:it.url}, true);
-      S.bank = (await api('bank')).rows; it.msg = 'Tersimpan ke Bank'; }catch(err){ it.msg = err.message; } return render(); }
+      await loadBank(); it.msg = 'Tersimpan ke Bank'; }catch(err){ it.msg = err.message; } return render(); }
   if(a === 'ask'){ await askOne(it); render(); }
 });
 async function askOne(it){
@@ -170,7 +180,7 @@ $('askAll').onclick = async () => { const L = S.items.filter(it => !it.skip && !
   for(const it of L) await askOne(it); render(); };
 $('saveAll').onclick = async () => { const L = S.items.filter(it => !it.skip && (it.det || it.src)); let n = 0;
   for(const it of L){ try{ await api('saveBank', {model:S.prod, parameter:it.par, requirement:it.req, yesno:it.yn, details:it.det, source:it.src, url:it.url}, true); n++; it.msg = 'Tersimpan ke Bank'; }catch(e){ it.msg = e.message; } }
-  S.bank = (await api('bank')).rows; render(); alert(n + ' jawaban tersimpan ke Bank'); };
+  await loadBank(); render(); alert(n + ' jawaban tersimpan ke Bank'); };
 $('fill').onclick = async () => { const rows = S.items.filter(it => !it.skip && it.row).map(it => ({row:it.row, yn:it.yn, details:it.det, source:it.src, url:it.url}));
   if(!rows.length){ alert('Belum ada baris bernomor. Gunakan "Tempel banyak sekaligus" dari form.'); return; }
   let u = prompt('Link Google Sheet form tender (hasil File > Save as Google Sheets):', localStorage.getItem('th_form') || ''); if(!u) return; localStorage.setItem('th_form', u);
@@ -181,7 +191,9 @@ $('csv').onclick = () => { const q = s => '"' + String(s ?? '').replace(/"/g,'""
   const t = ['Parameter,Requirement,Ya/Tidak,Details,Sumber,URL'].concat(S.items.map(it => [it.par,it.req,it.yn,it.det,it.src,it.url].map(q).join(','))).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + t], {type:'text/csv'})); a.download = 'tender-' + (S.prod||'jawaban') + '.csv'; a.click(); };
 let dp = null;
-addEventListener('beforeinstallprompt', e => { e.preventDefault(); dp = e; $('inst').hidden = false; });
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); dp = e; $('inst').hidden = false; $('hint').hidden = true; });
+addEventListener('appinstalled', () => { $('inst').hidden = true; $('hint').hidden = true; });
+setTimeout(() => { if($('inst').hidden && !matchMedia('(display-mode: standalone)').matches){ $('hint').hidden = false; $('hint').textContent = 'Pasang: menu browser (titik tiga) > Install app / Tambahkan ke layar utama.'; } }, 4000);
 $('inst').onclick = async () => { if(!dp) return; dp.prompt(); await dp.userChoice; dp = null; $('inst').hidden = true; };
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 init();
