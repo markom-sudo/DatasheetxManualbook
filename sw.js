@@ -1,7 +1,7 @@
 // Service worker Tender Helper: cangkang aplikasi tetap terbuka saat offline.
 // Data (Apps Script) tidak pernah di-cache, jadi isi manual/Bank selalu terbaru.
-const V = 'th-v1';
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'assets/Icon192.svg', 'assets/Icon512.svg'];
+const V = 'th-v2';
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'assets/Icon192.svg', 'assets/Icon512.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable-512.png', 'assets/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => Promise.allSettled(SHELL.map(u => c.add(u)))).then(() => self.skipWaiting()));
